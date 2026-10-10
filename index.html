@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>智慧保安考勤系统 · 人脸定位双校验打卡</title>
+<link rel="stylesheet" href="lib/leaflet/leaflet.css" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- 顶栏 -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-logo">🛡️</div>
+    <div>
+      <h1>智慧保安考勤系统</h1>
+      <p>人脸识别 · GPS 定位 · 双因子校验打卡</p>
+    </div>
+  </div>
+  <div class="clock" id="topClock">----</div>
+</header>
+
+<!-- 导航 -->
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-page="checkin">📋 打卡</button>
+  <button class="tab" data-page="records">📊 考勤记录</button>
+  <button class="tab" data-page="employees">👤 人员底库</button>
+  <button class="tab" data-page="posts">📍 岗位配置</button>
+</nav>
+
+<main class="container">
+
+  <!-- ============ 打卡页 ============ -->
+  <section class="page active" id="page-checkin">
+    <div class="checkin-grid">
+
+      <div class="card cam-card">
+        <div class="cam-wrap" id="camWrap">
+          <video id="ciVideo" muted playsinline></video>
+          <canvas id="ciOverlay" class="cam-overlay"></canvas>
+          <div class="face-oval"></div>
+          <div class="cam-hint" id="ciHint">请选择岗位后点击「开始打卡」</div>
+          <div class="challenge hidden" id="ciChallenge"></div>
+        </div>
+
+        <div class="verify-chips">
+          <div class="vchip" id="chipFace"><span class="dot"></span>人脸活体</div>
+          <div class="vchip" id="chipLoc"><span class="dot"></span>定位采点 <b id="locCount">0/5</b></div>
+          <div class="vchip" id="chipRange"><span class="dot"></span>范围判定</div>
+        </div>
+
+        <div class="ci-actions">
+          <div class="seg" id="ciTypeSeg">
+            <button class="seg-btn active" data-type="CLOCK_IN">上班打卡</button>
+            <button class="seg-btn" data-type="CLOCK_OUT">下班打卡</button>
+          </div>
+          <button class="btn btn-primary btn-lg" id="btnStartCheckin">开始打卡</button>
+        </div>
+      </div>
+
+      <aside class="card side-card">
+        <h3 class="card-title">选择岗位</h3>
+        <div class="post-picker" id="ciPostList"></div>
+        <div class="side-note" id="ciSideNote"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ 考勤记录页 ============ -->
+  <section class="page" id="page-records">
+    <div class="stat-row" id="statRow"></div>
+    <div class="card">
+      <div class="filters">
+        <label>日期 <input type="date" id="fltDate" /></label>
+        <label>人员
+          <select id="fltEmployee"><option value="">全部人员</option></select>
+        </label>
+        <label>类型
+          <select id="fltType">
+            <option value="">全部</option>
+            <option value="CLOCK_IN">上班卡</option>
+            <option value="CLOCK_OUT">下班卡</option>
+          </select>
+        </label>
+        <button class="btn btn-ghost" id="btnFltReset">重置</button>
+      </div>
+      <div class="table-wrap">
+        <table class="rtable">
+          <thead>
+            <tr>
+              <th>现场照片</th><th>姓名</th><th>类型</th><th>打卡时间</th>
+              <th>岗位</th><th>距岗位</th><th>定位精度</th><th>人脸相似度</th>
+              <th>考勤状态</th><th>审核状态</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="recordTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 人员底库页 ============ -->
+  <section class="page" id="page-employees">
+    <div class="page-head">
+      <h2 class="page-title">人脸底库</h2>
+      <button class="btn btn-primary" id="btnAddEmployee">＋ 录入新人员</button>
+    </div>
+    <p class="page-desc">入职采集正面 / 左侧 / 右侧三张照片，本地提取 128 维人脸特征向量用于打卡时的 1:N 身份比对。</p>
+    <div class="emp-grid" id="empGrid"></div>
+  </section>
+
+  <!-- ============ 岗位配置页 ============ -->
+  <section class="page" id="page-posts">
+    <div class="page-head">
+      <h2 class="page-title">岗位配置</h2>
+      <button class="btn btn-primary" id="btnAddPost">＋ 新增岗位</button>
+    </div>
+    <p class="page-desc">在地图上标注岗位中心点，设置允许打卡半径（默认 100 米）与班次时间段。判定时含安全余量，抵消 GPS 漂移。</p>
+    <div class="post-grid" id="postGrid"></div>
+  </section>
+
+</main>
+
+<!-- ============ 录入人员弹窗 ============ -->
+<div class="modal-mask hidden" id="empModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="empModalTitle">录入新人员</h3>
+      <button class="modal-x" data-close="empModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- 步骤1：基本信息 -->
+      <div id="empStepInfo">
+        <div class="form-row">
+          <label>姓名 <input type="text" id="empName" maxlength="20" placeholder="如：张三" /></label>
+          <label>手机号 <input type="text" id="empPhone" maxlength="11" placeholder="选填" /></label>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" data-close="empModal">取消</button>
+          <button class="btn btn-primary" id="btnToCapture">开始人脸采集 →</button>
+        </div>
+      </div>
+      <!-- 步骤2：三角度采集 -->
+      <div id="empStepCapture" class="hidden">
+        <div class="enroll-grid">
+          <div class="enroll-cam">
+            <div class="cam-wrap small">
+              <video id="enVideo" muted playsinline></video>
+              <div class="cam-hint" id="enHint">正在启动摄像头…</div>
+            </div>
+            <div class="enroll-guide" id="enGuide">请正对摄像头，保持光线充足</div>
+            <button class="btn btn-primary" id="btnEnCapture">拍摄第 1 张（正面）</button>
+          </div>
+          <div class="enroll-shots">
+            <div class="shot-slot" data-idx="0"><div class="shot-ph">正面</div><canvas></canvas></div>
+            <div class="shot-slot" data-idx="1"><div class="shot-ph">左侧 15°</div><canvas></canvas></div>
+            <div class="shot-slot" data-idx="2"><div class="shot-ph">右侧 15°</div><canvas></canvas></div>
+            <button class="btn btn-ghost hidden" id="btnEnRetake">↺ 重拍本组</button>
+            <button class="btn btn-primary hidden" id="btnEnSave">✓ 完成录入</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 岗位弹窗 ============ -->
+<div class="modal-mask hidden" id="postModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="postModalTitle">新增岗位</h3>
+      <button class="modal-x" data-close="postModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>岗位名称 <input type="text" id="postName" maxlength="30" placeholder="如：东门岗亭" /></label>
+        <label>允许半径(米)
+          <input type="range" id="postRadius" min="50" max="500" step="10" value="100" />
+          <span class="range-val" id="postRadiusVal">100 m</span>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>上班时间 <input type="time" id="postShiftStart" value="08:00" /></label>
+        <label>下班时间 <input type="time" id="postShiftEnd" value="18:00" /></label>
+        <label class="latlng">纬度 <input type="number" id="postLat" step="0.000001" placeholder="39.908722" /></label>
+        <label class="latlng">经度 <input type="number" id="postLng" step="0.000001" placeholder="116.397496" /></label>
+      </div>
+      <div class="map-toolbar">
+        <button class="btn btn-ghost btn-sm" id="btnLocateMe">◉ 定位到我的位置</button>
+        <span class="map-tip">在地图上点击可微调中心点，标记可拖动</span>
+      </div>
+      <div class="map-picker" id="postMap"></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close="postModal">取消</button>
+        <button class="btn btn-primary" id="btnSavePost">保存岗位</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 打卡结果弹窗 ============ -->
+<div class="modal-mask hidden" id="resultModal">
+  <div class="modal">
+    <div class="modal-head"><h3>打卡结果</h3></div>
+    <div class="modal-body" id="resultBody"></div>
+  </div>
+</div>
+
+<!-- ============ 记录详情弹窗 ============ -->
+<div class="modal-mask hidden" id="detailModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>打卡详情</h3>
+      <button class="modal-x" data-close="detailModal">✕</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+  </div>
+</div>
+
+<!-- ============ 隐私合规弹窗 ============ -->
+<div class="modal-mask" id="consentModal">
+  <div class="modal modal-sm">
+    <div class="modal-head"><h3>隐私授权与使用说明</h3></div>
+    <div class="modal-body">
+      <p>依据《个人信息保护法》，本系统在打卡时将收集以下信息：</p>
+      <ul class="consent-list">
+        <li><b>摄像头 / 人脸信息</b>：用于活体检测与本人身份核验，人脸特征仅保存在本机浏览器中；</li>
+        <li><b>地理位置（GPS）</b>：用于核验您是否处于指定岗位允许半径范围内；</li>
+        <li><b>设备指纹与打卡时间</b>：用于考勤留痕与防作弊追溯。</li>
+      </ul>
+      <p class="muted">所有数据均存储于本机浏览器（IndexedDB），不上传服务器。点击「同意并继续」表示您已知情并授权。</p>
+      <div class="modal-foot">
+        <button class="btn btn-primary" id="btnAgree">同意并继续</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全局轻提示 -->
+<div class="toast-wrap" id="toastWrap"></div>
+<!-- 模型加载遮罩 -->
+<div class="loading-mask hidden" id="loadingMask"><div class="loading-box"><div class="spinner"></div><p id="loadingText">正在加载人脸识别模型…</p></div></div>
+
+<script src="lib/face-api.min.js"></script>
+<script src="lib/leaflet/leaflet.js"></script>
+<script src="js/db.js"></script>
+<script src="js/geo.js"></script>
+<script src="js/face.js"></script>
+<script src="js/map.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
